@@ -320,7 +320,8 @@ class GeneticNetTrainer(object):
         self.epoch_num -= 1
         loaded_weights = self.load_generation(epoch_num=epoch_num,
                                               experiment_name=experiment_name)
-        new_weights = self.make_next_generation(loaded_weights)
+        approx_stats = self.run_generation(loaded_weights)
+        new_weights = self.make_next_generation(approx_stats)
         self.epoch_num += 1
         return self.run_all_generations(new_weights)
 
