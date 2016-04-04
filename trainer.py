@@ -496,7 +496,7 @@ class Genetic2048Trainer(GeneticNetTrainer):
         results = [None for _ in xrange(self.games_per_model)]
         for idx in xrange(self.games_per_model):
             results[idx] = self.test_net_once(net, num_iterations)
-        scores = [s.score for s in results]
+        scores = [s.game_score for s in results]
         invalid_moves = [s.invalid_moves for s in results]
         valid_moves = [s.valid_moves for s in results]
         game_overs = [s.game_over for s in results]
