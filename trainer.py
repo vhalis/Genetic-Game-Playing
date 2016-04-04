@@ -127,6 +127,7 @@ class GeneticNetTrainer(object):
         self.generation_cutoff = generation_cutoff
         self.mutation_chance = mutation_chance
         self.mutation_difference = mutation_difference
+        # Model variables
         self.iterations_per_model = iterations_per_model
         # Net variables
         self.net_hidden_sizes = net_hidden_sizes
@@ -405,6 +406,7 @@ class GeneticNetTrainer(object):
 
 class Genetic2048Trainer(GeneticNetTrainer):
 
+    DEFAULT_MODEL_GAMES = 5
     NORMALIZE_BOARD = False
 
     def __init__(self,
@@ -414,10 +416,15 @@ class Genetic2048Trainer(GeneticNetTrainer):
                  full_board_ends_game=Board.FULL_BOARD_ENDS_GAME,
                  invalid_move_ends_game=Board.INVALID_MOVE_ENDS_GAME,
                  # Training Parameters
+                 games_per_model=DEFAULT_MODEL_GAMES,
                  normalize_board=NORMALIZE_BOARD,
                  **kwargs):
         super(Genetic2048Trainer, self).__init__(**kwargs)
 
+        if (not isinstance(games_per_model, int) or
+                games_per_model <= 0):
+            raise ValueError('Number of games per model must be a positive'
+                             ' integer')
         # Test to ensure nothing breaks
         Board(dimensions=board_dimensions, length=board_dim_length,
               full_board_ends_game=full_board_ends_game,
@@ -429,7 +436,17 @@ class Genetic2048Trainer(GeneticNetTrainer):
         self.full_board_ends_game = full_board_ends_game
         self.invalid_move_ends_game = invalid_move_ends_game
         # Training Variables
+        self.games_per_model = games_per_model
         self.normalize_board = normalize_board
+
+    def _calc_game_score(self, scores):
+        return sum(scores)/float(len(scores))
+
+    def _calc_invalid_moves(self, invalid_moves):
+        return sum(invalid_moves)/float(len(invalid_moves))
+
+    def _calc_valid_moves(self, valid_moves):
+        return sum(valid_moves)/float(len(valid_moves))
 
     def get_model_score(self, score):
         """
@@ -476,6 +493,19 @@ class Genetic2048Trainer(GeneticNetTrainer):
         @num_iterations: Max number of iterations to try
         @return: Score2048 namedtuple
         """
+        results = [None for _ in xrange(self.games_per_model)]
+        for idx in xrange(self.games_per_model):
+            results[idx] = self.test_net_once(net, num_iterations)
+        scores = [s.score for s in results]
+        invalid_moves = [s.invalid_moves for s in results]
+        valid_moves = [s.valid_moves for s in results]
+        game_overs = [s.game_over for s in results]
+        return Score2048(game_over=','.join(game_overs),
+                         game_score=self._calc_game_score(scores),
+                         invalid_moves=self._calc_invalid_moves(invalid_moves),
+                         valid_moves=self._calc_valid_moves(valid_moves))
+
+    def test_net_once(self, net, num_iterations):
         b = Board(dimensions=self.board_dimensions,
                   length=self.board_dim_length,
                   full_board_ends_game=self.full_board_ends_game,
