@@ -245,21 +245,40 @@ class GeneticNetTrainer(object):
         finally:
             return stats
 
-    def experiment_stats(self, experiment_name=None):
+    def experiment_stats(self, epoch_start=None, experiment_name=None,
+                         redo_epochs=False):
         # Look for stats file in experiment folder
-        # Load each epoch folder that isn't in the stats file
+        # Load each epoch folder that isn't in the stats file if epoch_start is
+        # None and start from after the last epoch in the file (assumes from 0)
         # Write to file for epochs not yet done, overwrite if redo_epochs=True
-        # Write in CSV format
-        # epoch_num, score, invalid_moves, valid_moves
-        # do min, 1st quartile, median, 3rd quartile, max for each variable
+        # Write in CSV format - Check metrics functions and subclasses for data
         experiment_name = experiment_name or self.experiment_name
-        epoch_n = 0
+        epoch_n = epoch_start if isinstance(epoch_start, int) else 0
+        new_file = True
         try:
-            os.remove(self.stats_name(experiment_name))
-        except IOError:
+            if redo_epochs:
+                os.remove(self.stats_name(experiment_name))
+            else:
+                with open(self.stats_name(experiment_name), 'r') as f:
+                    # File exists
+                    new_file = False
+                    if epoch_start is None:
+                        # Count epochs already done
+                        i = -1
+                        for i, l in enumerate(f):
+                            pass
+                        # Epochs and lines count from zero, so having a header
+                        # doesn't change the number of epochs based on number
+                        # of lines
+                        epoch_n = max(i, 0)
+        except (OSError, IOError):
             pass
         with open(self.stats_name(experiment_name), 'a+') as sf:
-            sf.write(self.experiment_stats_header() + "\n")
+            original_epoch = epoch_n
+            if new_file:
+                # If redo_epochs is True, new_file is also True
+                sf.write(self.experiment_stats_header() + "\n")
+            # Else we already tried to count the number of epochs done
             epoch_s = self.epoch_stats(epoch_num=epoch_n,
                                        experiment_name=experiment_name)
             while epoch_s:
@@ -269,7 +288,7 @@ class GeneticNetTrainer(object):
                 epoch_n += 1
                 epoch_s = self.epoch_stats(epoch_num=epoch_n,
                                            experiment_name=experiment_name)
-        print("Made stats for {} generations".format(epoch_n))
+        print("Made stats for {} epochs".format(epoch_n - original_epoch))
 
     def experiment_stats_header(self):
         # This is the required order of stat output

@@ -36,5 +36,20 @@ t = TT(iterations_per_model=20, experiment_name='ttt_1',
        hidden_sizes=(4,), inputs=9, outputs=9,
        generations=1000, generation_size=1000, generation_cutoff=0.3,
        invalid_move_ends_game=True)
-w_out = t.resume_experiment(epoch_num=45)
+# If you don’t want to overwrite epochs, set the epoch num on the trainer
+t.epoch_num=45
+w_out = t.resume_experiment()
+# If you don’t care, don’t set it on the trainer and load the epoch directly
+# For example if the old expirement name differs
+w_out = t.resume_experiment(epoch_num=45, experiment_name='ttt_2')
 ```
+
+To get stats for an experiment, you can specify an epoch or get all stats at once:
+```
+t.experiment_stats()
+```
+This will place a `stats.csv` file in the experiments folder of the experiment name.
+Accepted parameters are:
+epoch_start - For the epoch number to start from
+experiment_name - If the name of the experiment is different than the experiment name of the trainer
+redo_epochs - If previous stats made should be overwritten
