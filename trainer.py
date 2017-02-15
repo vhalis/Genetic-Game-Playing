@@ -11,11 +11,17 @@ from collections import namedtuple
 import numpy
 
 from game import (
-    Board,
-    GameOver,
+    Board as Board2048,
     GameOverOverflow,
     )
+from nboard import (
+    GameOver,
+    )
 from nets import Net
+from ttt import (
+    BoardTTT,
+    GameOverInvalid,
+    )
 
 
 ModelStats = namedtuple('ModelStats',
@@ -25,12 +31,12 @@ ModelStats = namedtuple('ModelStats',
                          ])
 
 
-Score2048 = namedtuple('Score2048',
-                       ['game_over',
-                        'game_score',
-                        'invalid_moves',
-                        'valid_moves',
-                        ])
+ModelScore = namedtuple('ModelScore',
+                        ['game_over',
+                         'game_score',
+                         'invalid_moves',
+                         'valid_moves',
+                         ])
 
 
 class GeneticNetTrainer(object):
@@ -79,7 +85,7 @@ class GeneticNetTrainer(object):
 
         if (not isinstance(breeding_algorithm, basestring) or
                 breeding_algorithm not in self.BREEDING_ALGORITHM_CHOICES):
-            raise ValueError('Unknown mutation algorithm: {}'.format(
+            raise ValueError('Unknown net breeding algorithm: {}'.format(
                 breeding_algorithm))
         if (not isinstance(mutation_chance, float) or
                 not isinstance(mutation_difference, float) or
@@ -114,7 +120,8 @@ class GeneticNetTrainer(object):
 
         # Debug variables
         self.debug = kwargs.pop('debug', None)
-        self.get_model_score = kwargs.pop('score_algorithm', self.get_model_score)
+        self.get_model_score = kwargs.pop('score_algorithm',
+                                          self.get_model_score)
         # If kwargs not empty, extra key words were passed
         if len(kwargs.keys()) > 0:
             raise ValueError('Unnecessary kwargs passed to GeneticNetTrainer:'
@@ -156,11 +163,11 @@ class GeneticNetTrainer(object):
                 next_gen[offspring_num] = self.breed_organisms(
                     weights[idx], weights[pair_idx],
                     scores[idx], scores[pair_idx]
-                )
+                    )
             else:
                 next_gen[offspring_num] = self.breed_organisms(
                     weights[idx], weights[pair_idx],
-                )
+                    )
         return next_gen
 
     def breed_organisms(self, weights_1, weights_2,
@@ -199,7 +206,7 @@ class GeneticNetTrainer(object):
                 raise ValueError('Unknown breeding algorithm selected:'
                                  ' {}'.format(self.breeding_algorithm))
             if random.random() > 1.0 - self.mutation_chance:
-                updown = [1, -1][random.randint(0,1)]
+                updown = [1, -1][random.randint(0, 1)]
                 w_temp = w_temp + (w_temp * updown * self.mutation_difference)
             weights_out.put(idx, w_temp)
 
@@ -214,9 +221,9 @@ class GeneticNetTrainer(object):
     def epoch_metrics(self, stats):
         # min_score,q1_score,mean_score,q3_score,max_score
         scores = [ms.score for ms in stats]
-        avg_score = sum(scores)/float(len(scores))
+        avg_score = sum(scores) / float(len(scores))
         quartiles = numpy.percentile(scores,
-                                     [0,25,75,100],
+                                     [0, 25, 75, 100],
                                      overwrite_input=True)
         return (",".join([str(quartiles[0]), str(quartiles[1]), str(avg_score),
                           str(quartiles[2]), str(quartiles[3])])
@@ -238,7 +245,7 @@ class GeneticNetTrainer(object):
         finally:
             return stats
 
-    def experiment_stats(self, experiment_name=None): #, redo_epochs=False):
+    def experiment_stats(self, experiment_name=None):
         # Look for stats file in experiment folder
         # Load each epoch folder that isn't in the stats file
         # Write to file for epochs not yet done, overwrite if redo_epochs=True
@@ -249,7 +256,7 @@ class GeneticNetTrainer(object):
         epoch_n = 0
         try:
             os.remove(self.stats_name(experiment_name))
-        except:
+        except IOError:
             pass
         with open(self.stats_name(experiment_name), 'a+') as sf:
             sf.write(self.experiment_stats_header() + "\n")
@@ -328,24 +335,28 @@ class GeneticNetTrainer(object):
     def run_all_generations(self, weights):
         # Run each generation by starting from original weights and breeding
         # successive generations, then return the stats of the last generation
-        for generation_num in xrange(1, self.generations+1):
-            if self.debug is not None:
+        for generation_num in xrange(1, self.generations + 1):
+            if self.debug:
                 print "Running generation {}".format(generation_num)
             stats = self.run_generation(weights)
-            if self.debug is not None:
+            if self.debug:
                 scores = [ms.score for ms in stats]
                 print("High score {}".format(max(scores)))
-                print("Average score {}".format(sum(scores)/float(len(scores))))
-                if isinstance(self, Genetic2048Trainer):
+                print("Average score {}".format(
+                    sum(scores) / float(len(scores))))
+                if isinstance(self, ScoringTrainer):
                     invalids = [ms.score_parameters.invalid_moves
                                 for ms in stats]
                     valids = [ms.score_parameters.valid_moves
                               for ms in stats]
                     print("Least invalid moves {}".format(min(invalids)))
                     print("Most invalid moves {}".format(max(invalids)))
-                    print("Average invalid moves {}".format(sum(invalids)/
-                                                            float(len(invalids))
-                                                            ))
+                    print("Average invalid moves {}".format(
+                        sum(invalids) / float(len(invalids))))
+                    print("Least valid moves {}".format(min(valids)))
+                    print("Most valid moves {}".format(max(valids)))
+                    print("Average valid moves {}".format(
+                        sum(valids) / float(len(valids))))
             if (generation_num % self.epoch_size == 0 and
                     (generation_num != 0 or self.epoch_size == 1)):
                 self.do_epoch([m.weights for m in stats])
@@ -405,49 +416,159 @@ class GeneticNetTrainer(object):
         raise NotImplementedError()
 
 
-class Genetic2048Trainer(GeneticNetTrainer):
+class ScoringTrainer(GeneticNetTrainer):
+    """
+    Assumes that games have a score and both valid and invalid moves
+    """
 
     DEFAULT_MODEL_GAMES = 5
-    NORMALIZE_BOARD = False
+    SCORE_OBJ = ModelScore
 
     def __init__(self,
-                 # Board Parameters
-                 board_dim_length=Board.DEFAULT_LENGTH,
-                 board_dimensions=Board.DEFAULT_DIMENSIONS,
-                 full_board_ends_game=Board.FULL_BOARD_ENDS_GAME,
-                 invalid_move_ends_game=Board.INVALID_MOVE_ENDS_GAME,
                  # Training Parameters
                  games_per_model=DEFAULT_MODEL_GAMES,
-                 normalize_board=NORMALIZE_BOARD,
                  **kwargs):
-        super(Genetic2048Trainer, self).__init__(**kwargs)
+        super(ScoringTrainer, self).__init__(**kwargs)
 
         if (not isinstance(games_per_model, int) or
                 games_per_model <= 0):
             raise ValueError('Number of games per model must be a positive'
                              ' integer')
-        # Test to ensure nothing breaks
-        Board(dimensions=board_dimensions, length=board_dim_length,
-              full_board_ends_game=full_board_ends_game,
-              invalid_move_ends_game=invalid_move_ends_game)
 
-        # Board variables
-        self.board_dimensions = board_dimensions
-        self.board_dim_length = board_dim_length
-        self.full_board_ends_game = full_board_ends_game
-        self.invalid_move_ends_game = invalid_move_ends_game
         # Training Variables
         self.games_per_model = games_per_model
-        self.normalize_board = normalize_board
 
     def _calc_game_score(self, scores):
-        return sum(scores)/float(len(scores))
+        return sum(scores) / float(len(scores))
 
     def _calc_invalid_moves(self, invalid_moves):
-        return sum(invalid_moves)/float(len(invalid_moves))
+        return sum(invalid_moves) / float(len(invalid_moves))
 
     def _calc_valid_moves(self, valid_moves):
-        return sum(valid_moves)/float(len(valid_moves))
+        return sum(valid_moves) / float(len(valid_moves))
+
+    def epoch_metrics(self, stats):
+        base_metrics = super(ScoringTrainer, self).epoch_metrics(stats)
+        # min_invalid,q1_invalid,mean_invalid,q3_invalid,max_invalid
+        # min_valid,q1_valid,mean_valid,q3_valid,max_valid
+        invalids = [ms.score_parameters.invalid_moves for ms in stats]
+        valids = [ms.score_parameters.valid_moves for ms in stats]
+        avg_invalids = sum(invalids) / float(len(invalids))
+        avg_valids = sum(valids) / float(len(valids))
+        i_quartiles = numpy.percentile(invalids,
+                                       [0, 25, 75, 100],
+                                       overwrite_input=True)
+        v_quartiles = numpy.percentile(valids,
+                                       [0, 25, 75, 100],
+                                       overwrite_input=True)
+        invalid_metrics = (",".join([str(i_quartiles[0]), str(i_quartiles[1]),
+                                     str(avg_invalids),
+                                     str(i_quartiles[2]), str(i_quartiles[3])])
+                           + ",")
+        valid_metrics = (",".join([str(v_quartiles[0]), str(v_quartiles[1]),
+                                   str(avg_valids),
+                                   str(v_quartiles[2]), str(v_quartiles[3])])
+                         + ",")
+        return base_metrics + invalid_metrics + valid_metrics
+
+    def experiment_stats_header(self):
+        base_header = super(ScoringTrainer, self).experiment_stats_header()
+        # This is the required order of stat output
+        return (base_header +
+                "min_invalid,q1_invalid,mean_invalid,q3_invalid,max_invalid,"
+                "min_valid,q1_valid,mean_valid,q3_valid,max_valid,")
+
+    def test_net(self, net, num_iterations):
+        """
+        @net: An instantiated Net that can play the attached game
+        @num_iterations: Max number of games to play
+        @return: Score namedtuple
+        """
+        results = [None for _ in xrange(self.games_per_model)]
+        for idx in xrange(self.games_per_model):
+            results[idx] = self.test_net_once(net, num_iterations)
+        return self.sum_score_objs(results)
+
+    def sum_score_objs(self, results):
+        return self.SCORE_OBJ(
+            game_over=','.join(s.game_over for s in results),
+            game_score=self._calc_game_score([s.game_score for s in results]),
+            invalid_moves=self._calc_invalid_moves(
+                [s.invalid_moves for s in results]),
+            valid_moves=self._calc_valid_moves(
+                [s.valid_moves for s in results]))
+
+    def test_net_once(self, net, num_iterations):
+        """
+        Subclasses must play a single round of a game and return a score
+        @return: Score namedtuple
+        """
+        raise NotImplementedError()
+
+
+class BoardTrainer(ScoringTrainer):
+
+    BOARD_OBJ = None
+    NORMALIZE_BOARD = False
+
+    def __init__(self,
+                 # Board Parameters
+                 board_dim_length=None,
+                 board_dimensions=None,
+                 full_board_ends_game=None,
+                 invalid_move_ends_game=None,
+                 # Training Parameters
+                 normalize_board=None,
+                 **kwargs):
+        super(BoardTrainer, self).__init__(**kwargs)
+
+        def get_default(name, val):
+            return (val if val is not None
+                    else getattr(self.BOARD_OBJ, name))
+
+        self.board_dim_length = get_default('DEFAULT_LENGTH',
+                                            board_dim_length)
+        self.board_dimensions = get_default('DEFAULT_DIMENSIONS',
+                                            board_dimensions)
+        self.full_board_ends_game = get_default('FULL_BOARD_ENDS_GAME',
+                                                full_board_ends_game)
+        self.invalid_move_ends_game = get_default('INVALID_MOVE_ENDS_GAME',
+                                                  invalid_move_ends_game)
+        self.normalize_board = (
+            normalize_board
+            if normalize_board is not None
+            else self.NORMALIZE_BOARD
+            )
+
+        # Test to ensure nothing breaks
+        self.BOARD_OBJ(
+            dimensions=self.board_dimensions,
+            length=self.board_dim_length,
+            full_board_ends_game=self.full_board_ends_game,
+            invalid_move_ends_game=self.invalid_move_ends_game)
+
+    def test_net_once(self, net, num_iterations):
+        """
+        @return: Score namedtuple
+        """
+        board = self.BOARD_OBJ(
+            dimensions=self.board_dimensions,
+            length=self.board_dim_length,
+            full_board_ends_game=self.full_board_ends_game,
+            invalid_move_ends_game=self.invalid_move_ends_game)
+        return self.do_game(board, net, num_iterations)
+
+    def do_game(self, board, net, num_iterations):
+        """
+        Subclasses must play a single round of a game and return a score
+        @return: Score namedtuple
+        """
+        raise NotImplementedError()
+
+
+class Genetic2048Trainer(BoardTrainer):
+
+    BOARD_OBJ = Board2048
 
     def get_model_score(self, score):
         """
@@ -456,61 +577,7 @@ class Genetic2048Trainer(GeneticNetTrainer):
         """
         return score.game_score - score.invalid_moves
 
-    def epoch_metrics(self, stats):
-        base_metrics = super(Genetic2048Trainer, self).epoch_metrics(stats)
-        # min_invalid,q1_invalid,mean_invalid,q3_invalid,max_invalid
-        # min_valid,q1_valid,mean_valid,q3_valid,max_valid
-        invalids = [ms.score_parameters.invalid_moves for ms in stats]
-        valids = [ms.score_parameters.valid_moves for ms in stats]
-        avg_invalids = sum(invalids)/float(len(invalids))
-        avg_valids = sum(valids)/float(len(valids))
-        i_quartiles = numpy.percentile(invalids,
-                                       [0,25,75,100],
-                                       overwrite_input=True)
-        v_quartiles = numpy.percentile(valids,
-                                       [0,25,75,100],
-                                       overwrite_input=True)
-        invalid_metrics =  (",".join([str(i_quartiles[0]), str(i_quartiles[1]),
-                                      str(avg_invalids),
-                                      str(i_quartiles[2]), str(i_quartiles[3])])
-                            + ",")
-        valid_metrics =  (",".join([str(v_quartiles[0]), str(v_quartiles[1]),
-                                    str(avg_valids),
-                                    str(v_quartiles[2]), str(v_quartiles[3])])
-                          + ",")
-        return base_metrics + invalid_metrics + valid_metrics
-
-    def experiment_stats_header(self):
-        base_header = super(Genetic2048Trainer, self).experiment_stats_header()
-        # This is the required order of stat output
-        return (base_header +
-                "min_invalid,q1_invalid,mean_invalid,q3_invalid,max_invalid,"
-                "min_valid,q1_valid,mean_valid,q3_valid,max_valid,")
-
-    def test_net(self, net, num_iterations):
-        """
-        Make the net play 2048 until it fails or max iterations are reached
-        @net: An instantiated Net that can play 2048
-        @num_iterations: Max number of iterations to try
-        @return: Score2048 namedtuple
-        """
-        results = [None for _ in xrange(self.games_per_model)]
-        for idx in xrange(self.games_per_model):
-            results[idx] = self.test_net_once(net, num_iterations)
-        scores = [s.game_score for s in results]
-        invalid_moves = [s.invalid_moves for s in results]
-        valid_moves = [s.valid_moves for s in results]
-        game_overs = [s.game_over for s in results]
-        return Score2048(game_over=','.join(game_overs),
-                         game_score=self._calc_game_score(scores),
-                         invalid_moves=self._calc_invalid_moves(invalid_moves),
-                         valid_moves=self._calc_valid_moves(valid_moves))
-
-    def test_net_once(self, net, num_iterations):
-        b = Board(dimensions=self.board_dimensions,
-                  length=self.board_dim_length,
-                  full_board_ends_game=self.full_board_ends_game,
-                  invalid_move_ends_game=self.invalid_move_ends_game)
+    def do_game(self, board, net, num_iterations):
         score = 0
         try:
             i = 0
@@ -518,11 +585,11 @@ class Genetic2048Trainer(GeneticNetTrainer):
                 i += 1
 
                 if self.normalize_board:
-                    data = b.normalize_board()
+                    data = board.normalize_board()
                 else:
-                    data = b._tiles.flatten()
+                    data = board._tiles.flatten()
                 output = net.run(data)
-                b.loop(output.argmax(), suppress_invalid=True)
+                board.loop(output.argmax(), suppress_invalid=True)
         except GameOverOverflow as goo:
             reason = 'Overflow'
             score = 1 + int(str(goo))
@@ -532,8 +599,182 @@ class Genetic2048Trainer(GeneticNetTrainer):
         if not score:
             # Ended with iterations, not game filling up
             reason = 'Time Up'
-            score = b.score()
-        return Score2048(game_over=reason,
-                         game_score=score,
-                         invalid_moves=b.invalid_moves,
-                         valid_moves=b.valid_moves)
+            score = board.score()
+        return self.SCORE_OBJ(
+            game_over=reason,
+            game_score=score,
+            invalid_moves=board.invalid_moves,
+            valid_moves=board.valid_moves)
+
+
+class CompetitiveTrainer(BoardTrainer):
+    """
+    This trainer matches two nets against each other to play their game
+    The game must be a two-person game
+    """
+
+    def combine_stats(self, stats_one, stats_two, check_equal=False):
+        # Can't both be None
+        assert(stats_one or stats_two)
+        if not stats_one:
+            return stats_two
+        elif not stats_two:
+            return stats_one
+        if check_equal:
+            assert(numpy.array_equal(stats_one.weights, stats_two.weights))
+        all_params = self.sum_score_objs([stats_one.score_parameters,
+                                          stats_two.score_parameters])
+        return ModelStats(
+            weights=stats_one.weights,
+            score=self.get_model_score(all_params),
+            score_parameters=all_params,
+            )
+
+    def get_competition_partner(self, idx):
+        # Seed format
+        partner = self.generation_size - idx - 1
+        return partner if partner != idx else 0
+
+    def run_generation(self, generation_weights):
+        # Get stats on a single generation
+        stats = [None for _ in xrange(self.generation_size)]
+        for idx, weights in enumerate(generation_weights):
+            competitor = self.get_competition_partner(idx)
+            stats_out = self.run_model(
+                weights,
+                generation_weights[competitor]
+                )
+            # Each net should play two games, one as first player, one as
+            # second player
+            stats[idx] = self.combine_stats(stats[idx], stats_out[0])
+            stats[competitor] = self.combine_stats(stats[competitor],
+                                                   stats_out[1])
+        return stats
+
+    def run_model(self, weights_test, weights_adversary, num_iterations=None):
+        """
+        @return: (ModelStats_test, ModelStats_adversary) tuple of tuples
+        """
+        num_iterations = num_iterations or self.iterations_per_model
+        n1 = Net(hidden_sizes=self.net_hidden_sizes,
+                 weights=weights_test,
+                 inputs=self.net_inputs,
+                 outputs=self.net_outputs,
+                 weight_spread=self.net_spread,
+                 weight_middle=self.net_middle)
+        n2 = Net(hidden_sizes=self.net_hidden_sizes,
+                 weights=weights_adversary,
+                 inputs=self.net_inputs,
+                 outputs=self.net_outputs,
+                 weight_spread=self.net_spread,
+                 weight_middle=self.net_middle)
+        # We score both nets
+        score_params = self.test_net(n1, n2, num_iterations)
+        return (
+            ModelStats(
+                weights=n1.weights,
+                score_parameters=score_params[0],
+                score=self.get_model_score(score_params[0])
+                ),
+            ModelStats(
+                weights=n2.weights,
+                score_parameters=score_params[1],
+                score=self.get_model_score(score_params[1])
+                )
+            )
+
+    def test_net(self, net_test, net_adversary, num_iterations):
+        """
+        Scores the first net, net_test, by pitting it against the second net,
+        net_adversary
+        @return: (net_test Score namedtuple, net_adversary Score namedtuple)
+        """
+        results_test = [None for _ in xrange(self.games_per_model)]
+        results_adversary = [None for _ in xrange(self.games_per_model)]
+        for idx in xrange(self.games_per_model):
+            results_test[idx], results_adversary[idx] = self.test_net_once(
+                net_test, net_adversary, num_iterations)
+        return (
+            self.sum_score_objs(results_test),
+            self.sum_score_objs(results_adversary),
+            )
+
+    def test_net_once(self, net_test, net_adversary, num_iterations):
+        """
+        @return: (net_test Score namedtuple, net_adversary Score namedtuple)
+        """
+        board = self.BOARD_OBJ(
+            dimensions=self.board_dimensions,
+            length=self.board_dim_length,
+            full_board_ends_game=self.full_board_ends_game,
+            invalid_move_ends_game=self.invalid_move_ends_game)
+        return self.do_game(board, net_test, net_adversary, num_iterations)
+
+
+class TicTacToeTrainer(CompetitiveTrainer):
+
+    BOARD_OBJ = BoardTTT
+
+    def do_game(self, board, net_test, net_adversary, num_iterations):
+        player_to_move = 1
+        place_to_score_multiplier = {
+            'win': 1,
+            'loss': 0,
+            'draw': 0.5,
+            }
+        player_one_place = 'draw'
+        player_two_place = 'draw'
+        reason = 'No Game'
+        try:
+            i = 0
+            while i < num_iterations:
+                i += 1
+
+                if self.normalize_board:
+                    data = board.normalize_board(player_to_move)
+                else:
+                    data = board._tiles.flatten()
+                if player_to_move == 1:
+                    output = net_test.run(data)
+                else:
+                    output = net_adversary.run(data)
+                if board.loop(
+                        output.argmax(),
+                        player_to_move,
+                        suppress_invalid=True):
+                    # 2 player game
+                    player_to_move = (player_to_move % 2) + 1
+        except GameOverInvalid:
+            reason = 'Invalid Move by Player {}'.format(player_to_move)
+            # Treat it as a win if the other player made the invalid move
+            # Treat it as a loss if this net made the invalid move
+            player_one_place = 'win' if player_to_move == 2 else 'loss'
+            player_two_place = 'win' if player_to_move == 1 else 'loss'
+        except GameOver as go:
+            reason = 'Game Ended'
+            winning_player = int(str(go))
+            if winning_player == 1:
+                player_one_place = 'win'
+                player_two_place = 'loss'
+            elif winning_player == 2:
+                player_one_place = 'loss'
+                player_two_place = 'win'
+            else:
+                # Draw assumed by default
+                pass
+        score1 = place_to_score_multiplier.get(player_one_place)
+        score2 = place_to_score_multiplier.get(player_two_place)
+        return (
+            self.SCORE_OBJ(
+                game_over=reason,
+                game_score=score1,
+                invalid_moves=board.p1_invalid_moves,
+                valid_moves=board.p1_valid_moves,
+                ),
+            self.SCORE_OBJ(
+                game_over=reason,
+                game_score=score2,
+                invalid_moves=board.p2_invalid_moves,
+                valid_moves=board.p2_valid_moves,
+                ),
+            )

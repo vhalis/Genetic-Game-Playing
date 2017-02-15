@@ -10,56 +10,32 @@ from algs import (
     add_at_idx,
     sort_quickest_ascending,
     )
-
-class GameOver(Exception):
-    pass
+from nboard import (
+    GameOver,
+    NBoard,
+    )
 
 
 class GameOverOverflow(GameOver):
     pass
 
 
-class Board(object):
-    """Tiles are stored in a numpy array"""
-    DEFAULT_DIMENSIONS = 2
-    DEFAULT_LENGTH = 4
+class Board(NBoard):
+
     DIR_MAP = {
         'down': 0,
         'left': 3,
         'right': 2,
         'up': 1,
-    }
+        }
     DOUBLE_CHANCE = 0.1
-    FULL_BOARD_ENDS_GAME = True
-    INVALID_MOVE_ENDS_GAME = False
 
-    def __init__(self, dimensions=DEFAULT_DIMENSIONS, length=DEFAULT_LENGTH,
-                 full_board_ends_game=FULL_BOARD_ENDS_GAME,
-                 invalid_move_ends_game=INVALID_MOVE_ENDS_GAME,
-                 seed=True):
-        if dimensions <= 0 or length <= 0:
-            raise ValueError('Dimensions and length must be positive integers')
-        self.dims = dimensions
-        self.directions = dimensions*2
-        self.invalid_moves = 0
-        self.length = length
-        self.valid_moves = 0
-        self.num_elements = self.length**self.dims
-        self.full_board_ends_game = full_board_ends_game
-        self.invalid_move_ends_game = invalid_move_ends_game
-        # Initialize board to zeros
-        self._tiles = None
-        self._last_tiles = None
-        self._init_tiles()
+    def __init__(self, seed=True, *args, **kwargs):
+        super(Board, self).__init__(*args, **kwargs)
+        self.directions = self.dims * 2
         if seed:
             self.make_tile()
             self.make_tile()
-
-    def _init_tiles(self):
-        dims = [self.length for _ in range(0, self.dims)]
-        self._tiles = numpy.zeros(dims, dtype=int)
-        self._last_tiles = None
-        self._indices = list(numpy.ndindex(self._tiles.shape))
 
     def _make_val(self):
         return 1 if random.random() < (1.0 - self.DOUBLE_CHANCE) else 2
@@ -80,39 +56,15 @@ class Board(object):
                         return True
         return False
 
-    def display(self):
-        print(self._tiles)
-
-    def empty_tiles(self):
-        return [idx for idx, val in enumerate(self._tiles.flat)
-                if val == 0]
-
-    def game_over(self, overflow=False):
-        if overflow:
-            raise GameOverOverflow(self.score())
-        else:
-            raise GameOver(self.score())
-
-    def is_board_full(self):
-        return self._tiles.all()
-
-    def loop(self, direction, suppress_invalid=False):
-        if self.move(direction, suppress_invalid=suppress_invalid):
-            self.make_tile()
-            return True
-        elif self.invalid_move_ends_game:
-            self.game_over()
-        elif not self.are_there_valid_moves():
-            if self.full_board_ends_game:
-                self.game_over()
-        return False
+    def post_valid_move(self):
+        self.make_tile()
 
     def make_tile(self):
         if self.is_board_full():
             self.game_over()
             return
         empty_tiles = self.empty_tiles()
-        ridx = random.randint(0, len(empty_tiles)-1)
+        ridx = random.randint(0, len(empty_tiles) - 1)
         self._tiles.put(empty_tiles[ridx], self._make_val())
 
     def move(self, direction, suppress_invalid=False):
@@ -135,7 +87,7 @@ class Board(object):
         # Take only contiguous elements:
         bottom = 0
         while bottom < self.num_elements:
-            self._move_tile_row(indices[bottom:bottom+self.length])
+            self._move_tile_row(indices[bottom:bottom + self.length])
             bottom += self.length
 
         # Decide if the new board is a valid position
@@ -159,8 +111,7 @@ class Board(object):
         exclusive_bottom = -1
         for idx_from in xrange(1, self.length):
             cur_idx = idx_from
-            for idx_to in xrange(idx_from-1, exclusive_bottom, -1):
-                #import pdb; pdb.set_trace()
+            for idx_to in xrange(idx_from - 1, exclusive_bottom, -1):
                 if self._move_tile_terminal(row_coords[cur_idx],
                                             row_coords[idx_to]):
                     # Exclude the tile moved to from future moves on this row
@@ -196,6 +147,12 @@ class Board(object):
             # Collision, stop moving
             return True
 
+    def game_over(self, overflow=False):
+        if overflow:
+            raise GameOverOverflow(self.score())
+        else:
+            raise GameOver(self.score())
+
     def normalize_board(self, reshape=False):
         tile_copy = self._tiles.flatten()
         unique_tiles = set(tile_copy)
@@ -210,17 +167,6 @@ class Board(object):
         else:
             return tile_copy
 
-    def undo(self):
-        if self._last_tiles is not None:
-            if numpy.array_equal(self._tiles, self._last_tiles):
-                print("Can't undo more than one move at a time")
-            else:
-                self._tiles = self._last_tiles
-                return True
-        else:
-            print("Can't undo first move")
-        return False
-
     def score(self):
         return self._tiles.sum()
 
@@ -232,7 +178,7 @@ class Game(object):
         ('j', 'down'),
         ('k', 'up'),
         ('l', 'right'),
-    ))
+        ))
 
     def __init__(self, *args, **kwargs):
         self.board = Board(*args, **kwargs)
