@@ -649,6 +649,7 @@ class CompetitiveTrainer(BoardTrainer):
                                           stats_two.score_parameters])
         return ModelStats(
             weights=stats_one.weights,
+            # This performs averaging over the two sets
             score=self.get_model_score(all_params),
             score_parameters=all_params,
             )
@@ -667,8 +668,8 @@ class CompetitiveTrainer(BoardTrainer):
                 weights,
                 generation_weights[competitor]
                 )
-            # Each net should play two games, one as first player, one as
-            # second player
+            # Each net should play two rounds of games, one as first player, one
+            # as second player
             stats[idx] = self.combine_stats(stats[idx], stats_out[0])
             stats[competitor] = self.combine_stats(stats[competitor],
                                                    stats_out[1])

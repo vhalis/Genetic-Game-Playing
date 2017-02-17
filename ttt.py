@@ -1,4 +1,7 @@
 from argparse import ArgumentParser
+from random import choice as rand_choice
+
+from numpy import array as np_array
 
 from nboard import (
     GameOver,
@@ -21,9 +24,9 @@ class BoardTTT(NBoard):
         }
 
     def __init__(self, player_to_tile=PLAYER_TO_TILE, *args, **kwargs):
-        kwargs['dimensions'] = self.DEFAULT_DIMENSIONS
+        kwargs['dimensions'] = kwargs.get('dimensions', self.DEFAULT_DIMENSIONS)
         kwargs['full_board_ends_game'] = self.FULL_BOARD_ENDS_GAME
-        kwargs['length'] = kwargs.get('length') or self.DEFAULT_LENGTH
+        kwargs['length'] = kwargs.get('length',  self.DEFAULT_LENGTH)
         super(BoardTTT, self).__init__(*args, **kwargs)
         self.player_to_tile = player_to_tile
         self.winning_player = 0
@@ -114,14 +117,41 @@ class BoardTTT(NBoard):
             return tile_copy
 
 
+class NaiveTTTPlayer(object):
+    """
+    The goal of this class is to provide a baseline for the genetically selected
+    neural nets to play against so that they don't converge on solutions that
+    only work against themselves. For instance, prior experiments have bred
+    organisms that make invalid moves to end the game and keep all scores low,
+    and organisms that only know how to play two games of tic tac toe and so
+    can only play against each other.
+    """
+
+    def run(self, board):
+        available_moves = [idx for idx, sq in enumerate(board) if sq == 0]
+        random_idx = rand_choice(available_moves)
+        return np_array([1 if idx == random_idx else 0
+                         for idx in xrange(len(board))])
+
+
 class Game(object):
 
-    def __init__(self, *args, **kwargs):
-        self.board = BoardTTT(*args, **kwargs)
-
-    def run(self, net_number, epoch_number, experiment_name):
-        opponent = None
-        if net_number >= 0:
+    def __init__(
+            self,
+            net_number=None,
+            epoch_number=None,
+            experiment_name=None,
+            use_naive_opponent=False,
+            play_solo=False,
+            **kwargs):
+        self.board = BoardTTT(**kwargs)
+        self.opponent = None
+        if use_naive_opponent:
+            self.opponent = NaiveTTTPlayer()
+        elif (not play_solo
+                and epoch_number is not None
+                and experiment_name is not None
+                and net_number is not None):
             from nets import Net
             from trainer import GeneticNetTrainer
             try:
@@ -130,17 +160,19 @@ class Game(object):
                     epoch_num=epoch_number,
                     experiment_name=experiment_name)
                 # Hardcoding is hard
-                net_hidden_sizes = (3,3)
+                net_hidden_sizes = (3, 3)
                 # 2D Tic Tac Toe sizes
                 net_inputs = 9
                 net_outputs = 9
-                opponent = Net(
+                self.opponent = Net(
                     hidden_sizes=net_hidden_sizes,
                     weights=net_data,
                     inputs=net_inputs,
                     outputs=net_outputs)
             except IOError:
                 pass
+
+    def run(self):
         last_move = None
         last_last_move = None
         player_to_move = 1
@@ -150,10 +182,10 @@ class Game(object):
                 print("{} to move".format(
                     self.board.player_to_tile[player_to_move]))
 
-                if player_to_move == 1 and opponent:
+                if player_to_move == 2 and self.opponent:
                     # AI always see themselves as player one
                     data = self.board.normalize_board(player_to_move)
-                    output = opponent.run(data)
+                    output = self.opponent.run(data)
                     print("{} to take {}".format(
                         self.board.player_to_tile[player_to_move],
                         output.argmax()))
@@ -212,7 +244,13 @@ if __name__ == '__main__':
     parser.add_argument('net_number', type=int, default=0, nargs='?')
     parser.add_argument('epoch_number', type=int, default=0, nargs='?')
     parser.add_argument('experiment_name', type=str, default='ttt', nargs='?')
+    parser.add_argument('--naive', action="store_true",
+                        help="Play against an opponent that makes random moves")
+    parser.add_argument('--solo', action="store_true",
+                        help="Play by yourself - Not used if naive is on")
     args = parser.parse_args()
-    Game().run(net_number=args.net_number,
-               epoch_number=args.epoch_number,
-               experiment_name=args.experiment_name)
+    Game(net_number=args.net_number,
+         epoch_number=args.epoch_number,
+         experiment_name=args.experiment_name,
+         use_naive_opponent=args.naive,
+         play_solo=args.solo).run()
