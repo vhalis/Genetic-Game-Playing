@@ -1,3 +1,5 @@
+from argparse import ArgumentParser
+
 from nboard import (
     GameOver,
     NBoard,
@@ -93,7 +95,7 @@ class BoardTTT(NBoard):
 
     def game_over(self, invalid_move=False, **kwargs):
         if invalid_move:
-            raise GameOverInvalid(self.score)
+            raise GameOverInvalid(self.score())
         else:
             super(BoardTTT, self).game_over(**kwargs)
 
@@ -117,7 +119,28 @@ class Game(object):
     def __init__(self, *args, **kwargs):
         self.board = BoardTTT(*args, **kwargs)
 
-    def run(self):
+    def run(self, net_number, epoch_number, experiment_name):
+        opponent = None
+        if net_number >= 0:
+            from nets import Net
+            from trainer import GeneticNetTrainer
+            try:
+                net_data = GeneticNetTrainer.load_single_net(
+                    idx=net_number,
+                    epoch_num=epoch_number,
+                    experiment_name=experiment_name)
+                # Hardcoding is hard
+                net_hidden_sizes = (3,3)
+                # 2D Tic Tac Toe sizes
+                net_inputs = 9
+                net_outputs = 9
+                opponent = Net(
+                    hidden_sizes=net_hidden_sizes,
+                    weights=net_data,
+                    inputs=net_inputs,
+                    outputs=net_outputs)
+            except IOError:
+                pass
         last_move = None
         last_last_move = None
         player_to_move = 1
@@ -126,6 +149,26 @@ class Game(object):
                 self.board.display()
                 print("{} to move".format(
                     self.board.player_to_tile[player_to_move]))
+
+                if player_to_move == 1 and opponent:
+                    # AI always see themselves as player one
+                    data = self.board.normalize_board(player_to_move)
+                    output = opponent.run(data)
+                    print("{} to take {}".format(
+                        self.board.player_to_tile[player_to_move],
+                        output.argmax()))
+                    if self.board.loop(
+                            output.argmax(),
+                            player_to_move,
+                            suppress_invalid=True):
+                        # 2 player game
+                        player_to_move = (player_to_move % 2) + 1
+                    else:
+                        print("The AI made an invalid move and probably can't"
+                              " find a valid move. Sorry. :(")
+                        self.board.game_over(invalid_move=True)
+                    continue
+
                 s = raw_input().strip().lower()
                 is_number = False
                 temp_move = -1
@@ -165,4 +208,11 @@ class Game(object):
 
 
 if __name__ == '__main__':
-    Game().run()
+    parser = ArgumentParser()
+    parser.add_argument('net_number', type=int, default=0, nargs='?')
+    parser.add_argument('epoch_number', type=int, default=0, nargs='?')
+    parser.add_argument('experiment_name', type=str, default='ttt', nargs='?')
+    args = parser.parse_args()
+    Game().run(net_number=args.net_number,
+               epoch_number=args.epoch_number,
+               experiment_name=args.experiment_name)

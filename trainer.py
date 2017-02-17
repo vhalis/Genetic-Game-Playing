@@ -316,16 +316,21 @@ class GeneticNetTrainer(object):
         experiment_name = experiment_name or self.experiment_name
         output = [None for _ in xrange(self.generation_size)]
         for idx in xrange(self.generation_size):
-            with numpy.load(self.save_name(idx,
-                                           experiment_name=experiment_name,
-                                           epoch_num=epoch_num)) as data:
-                data_output = list()
-                key_indices = sorted([int(key.split('_')[1])
-                                      for key in data.keys()])
-                for k in key_indices:
-                    data_output.append(data['arr_{}'.format(k)])
-                output[idx] = data_output
+            output[idx] = self.load_single_net(
+                idx, epoch_num=epoch_num, experiment_name=experiment_name)
         return output
+
+    @classmethod
+    def load_single_net(cls, idx, epoch_num, experiment_name):
+        data_output = list()
+        with numpy.load(cls.save_name(
+                idx, epoch_num=epoch_num, experiment_name=experiment_name
+                )) as data:
+            key_indices = sorted([int(key.split('_')[1])
+                                  for key in data.keys()])
+            for k in key_indices:
+                data_output.append(data['arr_{}'.format(k)])
+        return data_output
 
     def make_next_generation(self, generation_stats):
         # Sort by descending score, highest score on top
@@ -415,9 +420,8 @@ class GeneticNetTrainer(object):
         for idx, weight_array in enumerate(weights):
             numpy.savez(self.get_save_file(idx), *weight_array)
 
-    def save_name(self, idx, experiment_name=None, epoch_num=None):
-        experiment_name = experiment_name or self.experiment_name
-        epoch_num = epoch_num if isinstance(epoch_num, int) else self.epoch_num
+    @classmethod
+    def save_name(cls, idx, experiment_name, epoch_num):
         # The suffix is added by numpy.savez
         return os.path.join("experiments",
                             experiment_name,
