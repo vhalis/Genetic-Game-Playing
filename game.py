@@ -147,7 +147,7 @@ class Board(NBoard):
             # Collision, stop moving
             return True
 
-    def game_over(self, overflow=False):
+    def game_over(self, overflow=False, **kwargs):
         if overflow:
             raise GameOverOverflow(self.score())
         else:
