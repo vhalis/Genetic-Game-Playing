@@ -227,6 +227,7 @@ class Game(object):
                     print("- [U]ndo (revert last move)")
                     print("- [Q]uit (leave game)")
                     print("- Type a number to place your symbol there")
+                    continue
 
                 if self.board.loop(temp_move, player_to_move):
                     last_last_move = last_move
