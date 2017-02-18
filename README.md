@@ -40,7 +40,7 @@ t = TT(iterations_per_model=20, experiment_name='ttt_1',
 t.epoch_num=45
 w_out = t.resume_experiment()
 # If you don’t care, don’t set it on the trainer and load the epoch directly
-# For example if the old expirement name differs
+# For example if the old experiment name differs
 w_out = t.resume_experiment(epoch_num=45, experiment_name='ttt_2')
 ```
 
@@ -50,6 +50,6 @@ t.experiment_stats()
 ```
 This will place a `stats.csv` file in the experiments folder of the experiment name.
 Accepted parameters are:
-epoch_start - For the epoch number to start from
-experiment_name - If the name of the experiment is different than the experiment name of the trainer
-redo_epochs - If previous stats made should be overwritten
+* epoch_start - For the epoch number to start from
+* experiment_name - If the name of the experiment is different than the experiment name of the trainer
+* redo_epochs - If previous stats made should be overwritten
