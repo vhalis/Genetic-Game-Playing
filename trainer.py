@@ -21,6 +21,7 @@ from nets import Net
 from ttt import (
     BoardTTT,
     GameOverInvalid,
+    NaiveTTTPlayer,
     )
 
 
@@ -636,6 +637,10 @@ class CompetitiveTrainer(BoardTrainer):
     The game must be a two-person game
     """
 
+    # This player will be used to play one extra round of games for each
+    # organism in the gene pool as a "baseline" to prevent convergence
+    BASE_PLAYER = None
+
     def combine_stats(self, stats_one, stats_two, check_equal=False):
         # Can't both be None
         assert(stats_one or stats_two)
@@ -673,39 +678,61 @@ class CompetitiveTrainer(BoardTrainer):
             stats[idx] = self.combine_stats(stats[idx], stats_out[0])
             stats[competitor] = self.combine_stats(stats[competitor],
                                                    stats_out[1])
+            # Standardize the net against a baseline player
+            if self.BASE_PLAYER:
+                stats_out = self.run_model(weights,
+                                           self.BASE_PLAYER,
+                                           is_naive=True)
+                stats[idx] = self.combine_stats(stats[idx], stats_out)
         return stats
 
-    def run_model(self, weights_test, weights_adversary, num_iterations=None):
+    def run_model(self,
+                  weights_test,
+                  weights_adversary,
+                  num_iterations=None,
+                  is_naive=False):
         """
         @return: (ModelStats_test, ModelStats_adversary) tuple of tuples
         """
         num_iterations = num_iterations or self.iterations_per_model
-        n1 = Net(hidden_sizes=self.net_hidden_sizes,
-                 weights=weights_test,
-                 inputs=self.net_inputs,
-                 outputs=self.net_outputs,
-                 weight_spread=self.net_spread,
-                 weight_middle=self.net_middle)
-        n2 = Net(hidden_sizes=self.net_hidden_sizes,
-                 weights=weights_adversary,
-                 inputs=self.net_inputs,
-                 outputs=self.net_outputs,
-                 weight_spread=self.net_spread,
-                 weight_middle=self.net_middle)
+        n1 = Net(
+            hidden_sizes=self.net_hidden_sizes,
+            weights=weights_test,
+            inputs=self.net_inputs,
+            outputs=self.net_outputs,
+            weight_spread=self.net_spread,
+            weight_middle=self.net_middle)
+        if is_naive:
+            n2 = weights_adversary()
+        else:
+            n2 = Net(
+                hidden_sizes=self.net_hidden_sizes,
+                weights=weights_adversary,
+                inputs=self.net_inputs,
+                outputs=self.net_outputs,
+                weight_spread=self.net_spread,
+                weight_middle=self.net_middle)
         # We score both nets
-        score_params = self.test_net(n1, n2, num_iterations)
-        return (
-            ModelStats(
+        score_params = self.test_net(n1, n2, num_iterations, is_naive)
+        if is_naive:
+            return ModelStats(
                 weights=n1.weights,
                 score_parameters=score_params[0],
                 score=self.get_model_score(score_params[0])
-                ),
-            ModelStats(
-                weights=n2.weights,
-                score_parameters=score_params[1],
-                score=self.get_model_score(score_params[1])
                 )
-            )
+        else:
+            return (
+                ModelStats(
+                    weights=n1.weights,
+                    score_parameters=score_params[0],
+                    score=self.get_model_score(score_params[0])
+                    ),
+                ModelStats(
+                    weights=n2.weights,
+                    score_parameters=score_params[1],
+                    score=self.get_model_score(score_params[1])
+                    )
+                )
 
     def test_net(self, net_test, net_adversary, num_iterations):
         """
@@ -738,6 +765,7 @@ class CompetitiveTrainer(BoardTrainer):
 class TicTacToeTrainer(CompetitiveTrainer):
 
     BOARD_OBJ = BoardTTT
+    BASE_PLAYER = NaiveTTTPlayer
 
     def do_game(self, board, net_test, net_adversary, num_iterations):
         player_to_move = 1
