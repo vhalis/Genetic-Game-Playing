@@ -682,7 +682,7 @@ class CompetitiveTrainer(BoardTrainer):
             if self.BASE_PLAYER:
                 stats_out = self.run_model(weights,
                                            self.BASE_PLAYER,
-                                           is_naive=True)
+                                           naive_player=2)
                 stats[idx] = self.combine_stats(stats[idx], stats_out)
         return stats
 
@@ -690,19 +690,22 @@ class CompetitiveTrainer(BoardTrainer):
                   weights_test,
                   weights_adversary,
                   num_iterations=None,
-                  is_naive=False):
+                  naive_player=None):
         """
         @return: (ModelStats_test, ModelStats_adversary) tuple of tuples
         """
         num_iterations = num_iterations or self.iterations_per_model
-        n1 = Net(
-            hidden_sizes=self.net_hidden_sizes,
-            weights=weights_test,
-            inputs=self.net_inputs,
-            outputs=self.net_outputs,
-            weight_spread=self.net_spread,
-            weight_middle=self.net_middle)
-        if is_naive:
+        if naive_player == 1:
+            n1 = weights_test()
+        else:
+            n1 = Net(
+                hidden_sizes=self.net_hidden_sizes,
+                weights=weights_test,
+                inputs=self.net_inputs,
+                outputs=self.net_outputs,
+                weight_spread=self.net_spread,
+                weight_middle=self.net_middle)
+        if naive_player == 2:
             n2 = weights_adversary()
         else:
             n2 = Net(
@@ -713,14 +716,8 @@ class CompetitiveTrainer(BoardTrainer):
                 weight_spread=self.net_spread,
                 weight_middle=self.net_middle)
         # We score both nets
-        score_params = self.test_net(n1, n2, num_iterations, is_naive)
-        if is_naive:
-            return ModelStats(
-                weights=n1.weights,
-                score_parameters=score_params[0],
-                score=self.get_model_score(score_params[0])
-                )
-        else:
+        score_params = self.test_net(n1, n2, num_iterations)
+        if naive_player is None:
             return (
                 ModelStats(
                     weights=n1.weights,
@@ -733,6 +730,20 @@ class CompetitiveTrainer(BoardTrainer):
                     score=self.get_model_score(score_params[1])
                     )
                 )
+        elif naive_player == 1:
+            return ModelStats(
+                weights=n2.weights,
+                score_parameters=score_params[1],
+                score=self.get_model_score(score_params[1])
+                )
+        elif naive_player == 2:
+            return ModelStats(
+                weights=n1.weights,
+                score_parameters=score_params[0],
+                score=self.get_model_score(score_params[0])
+                )
+        raise ValueError('naive_player got invalid value: {}'.format(
+            naive_player))
 
     def test_net(self, net_test, net_adversary, num_iterations):
         """
