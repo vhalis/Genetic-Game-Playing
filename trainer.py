@@ -26,7 +26,7 @@ from ttt import (
 
 
 ModelStats = namedtuple('ModelStats',
-                        ['weights',
+                        ['weights_idx',
                          'score',
                          'score_parameters',
                          ])
@@ -333,7 +333,7 @@ class GeneticNetTrainer(object):
                 data_output.append(data['arr_{}'.format(k)])
         return data_output
 
-    def make_next_generation(self, generation_stats):
+    def make_next_generation(self, generation_weights, generation_stats):
         # Sort by descending score, highest score on top
         generation_stats = sorted(generation_stats,
                                   key=attrgetter('score'),
@@ -345,7 +345,8 @@ class GeneticNetTrainer(object):
         if cutoff_num < 2:
             cutoff_num = 2
         cutoff_stats = generation_stats[:cutoff_num]
-        return self.breed_new_generation([m.weights for m in cutoff_stats],
+        return self.breed_new_generation([generation_weights[m.weights_idx]
+                                          for m in cutoff_stats],
                                          [m.score for m in cutoff_stats])
 
     def resume_experiment(self, experiment_name=None, epoch_num=None):
@@ -353,7 +354,7 @@ class GeneticNetTrainer(object):
         loaded_weights = self.load_generation(epoch_num=epoch_num,
                                               experiment_name=experiment_name)
         approx_stats = self.run_generation(loaded_weights)
-        new_weights = self.make_next_generation(approx_stats)
+        new_weights = self.make_next_generation(loaded_weights, approx_stats)
         self.epoch_num += 1
         return self.run_all_generations(new_weights)
 
@@ -384,12 +385,23 @@ class GeneticNetTrainer(object):
                         sum(valids) / float(len(valids))))
             if (generation_num % self.epoch_size == 0 and
                     (generation_num != 0 or self.epoch_size == 1)):
-                self.do_epoch([m.weights for m in stats])
-            weights = self.make_next_generation(stats)
+                self.do_epoch(weights)
+            weights = self.make_next_generation(weights, stats)
         return stats
 
     def run_experiment(self):
-        weights = [self.net_weights for _ in xrange(self.generation_size)]
+        def make_net_weights():
+            return Net(
+                hidden_sizes=self.net_hidden_sizes,
+                weights=None,
+                inputs=self.net_inputs,
+                outputs=self.net_outputs,
+                weight_spread=self.net_spread,
+                weight_middle=self.net_middle).weights
+        if self.net_weights is None:
+            weights = [make_net_weights() for _ in xrange(self.generation_size)]
+        else:
+            weights = [self.net_weights for _ in xrange(self.generation_size)]
         stats = self.run_all_generations(weights)
         return stats
 
@@ -397,10 +409,10 @@ class GeneticNetTrainer(object):
         # Get stats on a single generation
         stats = [None for _ in xrange(self.generation_size)]
         for idx, weights in enumerate(generation_weights):
-            stats[idx] = self.run_model(weights)
+            stats[idx] = self.run_model(weights, idx)
         return stats
 
-    def run_model(self, weights, num_iterations=None):
+    def run_model(self, weights, weights_idx, num_iterations=None):
         """
         @return: A ModelStats tuple
         """
@@ -412,7 +424,7 @@ class GeneticNetTrainer(object):
                 weight_spread=self.net_spread,
                 weight_middle=self.net_middle)
         score_params = self.test_net(n, num_iterations)
-        return ModelStats(weights=n.weights,
+        return ModelStats(weights_idx=weights_idx,
                           score_parameters=score_params,
                           score=self.get_model_score(score_params))
 
@@ -639,21 +651,13 @@ class CompetitiveTrainer(BoardTrainer):
 
     # This player will be used to play one extra round of games for each
     # organism in the gene pool as a "baseline" to prevent convergence
+    # It will be used as both first and second player
     BASE_PLAYER = None
 
-    def combine_stats(self, stats_one, stats_two, check_equal=False):
-        # Can't both be None
-        assert(stats_one or stats_two)
-        if not stats_one:
-            return stats_two
-        elif not stats_two:
-            return stats_one
-        if check_equal:
-            assert(numpy.array_equal(stats_one.weights, stats_two.weights))
-        all_params = self.sum_score_objs([stats_one.score_parameters,
-                                          stats_two.score_parameters])
+    def combine_scores(self, weights_idx, scores_list):
+        all_params = self.sum_score_objs(scores_list)
         return ModelStats(
-            weights=stats_one.weights,
+            weights_idx=weights_idx,
             # This performs averaging over the two sets
             score=self.get_model_score(all_params),
             score_parameters=all_params,
@@ -666,25 +670,31 @@ class CompetitiveTrainer(BoardTrainer):
 
     def run_generation(self, generation_weights):
         # Get stats on a single generation
-        stats = [None for _ in xrange(self.generation_size)]
+        scores = [list() for _ in xrange(self.generation_size)]
         for idx, weights in enumerate(generation_weights):
             competitor = self.get_competition_partner(idx)
-            stats_out = self.run_model(
+            score_out = self.run_model(
                 weights,
                 generation_weights[competitor]
                 )
             # Each net should play two rounds of games, one as first player, one
             # as second player
-            stats[idx] = self.combine_stats(stats[idx], stats_out[0])
-            stats[competitor] = self.combine_stats(stats[competitor],
-                                                   stats_out[1])
+            scores[idx].extend(score_out[0])
+            scores[competitor].extend(score_out[1])
             # Standardize the net against a baseline player
             if self.BASE_PLAYER:
-                stats_out = self.run_model(weights,
-                                           self.BASE_PLAYER,
-                                           naive_player=2)
-                stats[idx] = self.combine_stats(stats[idx], stats_out)
-        return stats
+                naive_stats_one = self.run_model(
+                    weights,
+                    self.BASE_PLAYER,
+                    naive_player=2)
+                scores[idx].extend(naive_stats_one)
+                naive_stats_two = self.run_model(
+                    self.BASE_PLAYER,
+                    weights,
+                    naive_player=1)
+                scores[idx].extend(naive_stats_two)
+        return [self.combine_scores(idx, score_list)
+                for idx, score_list in enumerate(scores)]
 
     def run_model(self,
                   weights_test,
@@ -692,7 +702,10 @@ class CompetitiveTrainer(BoardTrainer):
                   num_iterations=None,
                   naive_player=None):
         """
-        @return: (ModelStats_test, ModelStats_adversary) tuple of tuples
+        @return: (ModelScore_test, ModelScore_adversary) where each is a list
+                 of ModelScore tuples
+                 Or a single list of ModelScore tuples for the non-naive player
+                 if one is naive
         """
         num_iterations = num_iterations or self.iterations_per_model
         if naive_player == 1:
@@ -718,38 +731,16 @@ class CompetitiveTrainer(BoardTrainer):
         # We score both nets
         score_params = self.test_net(n1, n2, num_iterations)
         if naive_player is None:
-            return (
-                ModelStats(
-                    weights=n1.weights,
-                    score_parameters=score_params[0],
-                    score=self.get_model_score(score_params[0])
-                    ),
-                ModelStats(
-                    weights=n2.weights,
-                    score_parameters=score_params[1],
-                    score=self.get_model_score(score_params[1])
-                    )
-                )
-        elif naive_player == 1:
-            return ModelStats(
-                weights=n2.weights,
-                score_parameters=score_params[1],
-                score=self.get_model_score(score_params[1])
-                )
-        elif naive_player == 2:
-            return ModelStats(
-                weights=n1.weights,
-                score_parameters=score_params[0],
-                score=self.get_model_score(score_params[0])
-                )
-        raise ValueError('naive_player got invalid value: {}'.format(
-            naive_player))
+            return score_params
+        else:
+            return score_params[naive_player - 1]
 
     def test_net(self, net_test, net_adversary, num_iterations):
         """
         Scores the first net, net_test, by pitting it against the second net,
         net_adversary
-        @return: (net_test Score namedtuple, net_adversary Score namedtuple)
+        @return: (list of net_test Score namedtuples,
+                  list of net_adversary Score namedtuples)
         """
         results_test = [None for _ in xrange(self.games_per_model)]
         results_adversary = [None for _ in xrange(self.games_per_model)]
@@ -757,8 +748,8 @@ class CompetitiveTrainer(BoardTrainer):
             results_test[idx], results_adversary[idx] = self.test_net_once(
                 net_test, net_adversary, num_iterations)
         return (
-            self.sum_score_objs(results_test),
-            self.sum_score_objs(results_adversary),
+            results_test,
+            results_adversary,
             )
 
     def test_net_once(self, net_test, net_adversary, num_iterations):
