@@ -683,8 +683,11 @@ class CompetitiveTrainer(BoardTrainer):
             )
 
     def get_competition_partner(self, idx):
-        # Seed format
-        partner = self.generation_size - idx - 1
+        # Seed format, but don't make pairs play each other twice
+        if idx > self.generation_size / 2:
+            partner = self.generation_size - idx
+        else:
+            partner = self.generation_size - idx - 1
         return partner if partner != idx else 0
 
     def run_generation(self, generation_weights):

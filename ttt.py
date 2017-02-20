@@ -4,9 +4,9 @@ from random import choice as rand_choice
 
 from numpy import (
     array as np_array,
-    equal as np_equal,
     int8,
     vectorize,
+    where as np_where,
     )
 
 from nboard import (
@@ -21,18 +21,17 @@ class GameOverInvalid(GameOver):
 
 class BoardTTT(NBoard):
 
-    BOARD_NORMAL_BY_PLAYER = {
-        1: {
-            0: 0,
-            1: 1,
-            2: -1,
-            },
-        2: {
-            0: 0,
-            1: -1,
-            2: 1,
-            }
-        }
+    WINNING_COMBINATIONS = [
+        set([1, 2, 3]),
+        set([4, 5, 6]),
+        set([7, 8, 9]),
+        set([1, 4, 7]),
+        set([2, 5, 8]),
+        set([3, 6, 9]),
+        set([1, 5, 9]),
+        set([3, 5, 7]),
+        ]
+
     BOARD_TILE_TYPE = int8
 
     DEFAULT_DIMENSIONS = 2
@@ -62,20 +61,16 @@ class BoardTTT(NBoard):
         # 8 lines exist that can be the same symbol
         # Check verticals and horizontals
         # This only works for two dimensions right now
-        def check_winner(row):
-            # winner = reduce(lambda x, y: y if x == y else 0, row)
-            if row[0] != 0:
-                if np_equal.reduce(row):
-                    self.winning_player = row[0]
-        for row in self._tiles:
-            check_winner(row)
-        for col in self._tiles.T:
-            check_winner(col)
-        check_winner(self._tiles.diagonal())
-        # Flip left/right
-        check_winner(self._tiles[..., ::-1].diagonal())
-        if self.winning_player:
-            self.game_over()
+        p1 = set(np_where(self._tiles.flat == 1)[0])
+        for combo in self.WINNING_COMBINATIONS:
+            if combo.issubset(p1):
+                self.winning_player = 1
+                self.game_over()
+        p2 = set(np_where(self._tiles.flat == 2)[0])
+        for combo in self.WINNING_COMBINATIONS:
+            if combo.issubset(p2):
+                self.winning_player = 2
+                self.game_over()
 
     def display(self):
         tile_idx = 0
@@ -119,16 +114,12 @@ class BoardTTT(NBoard):
         return True
 
     def normalize_board(self, player_to_move, reshape=False):
-        # tile_copy = BoardTTT._remap(self._tiles.flatten(),
-                                    # player_to_move)
-        tile_copy = self._tiles.flatten()
-        tile_map = self.BOARD_NORMAL_BY_PLAYER[player_to_move]
-        for idx, tile in enumerate(tile_copy):
-            tile_copy.put(idx, tile_map[tile])
+        x = self._tiles.flat
+        tile_copy = np_where((x == 0) | (x == player_to_move), x, -1)
         if reshape:
-            return tile_copy.reshape(self._tiles.shape)
-        else:
             return tile_copy
+        else:
+            return tile_copy.ravel()
 
     def post_valid_move(self):
         if self.is_board_full():
@@ -137,11 +128,13 @@ class BoardTTT(NBoard):
             self.check_for_win()
 
     # For some reason this is terribly slow
-    # It's slow even with the dictionary in the function
-    @classmethod
+    # Probably better as board size grows
+    @staticmethod
     @partial(vectorize, excluded=['player_to_move'])
-    def _remap(cls, board_num, player_to_move):
-        return cls.BOARD_NORMAL_BY_PLAYER[player_to_move][board_num]
+    def _remap(board_num, player_to_move):
+        if board_num:
+            return 1 if player_to_move == board_num else -1
+        return board_num
 
     def reset(self):
         super(BoardTTT, self).reset()
