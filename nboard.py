@@ -12,7 +12,11 @@ class NBoard(object):
     FULL_BOARD_ENDS_GAME = True
     INVALID_MOVE_ENDS_GAME = False
 
-    def __init__(self, dimensions=DEFAULT_DIMENSIONS, length=DEFAULT_LENGTH,
+    BOARD_TILE_TYPE = int
+
+    def __init__(self,
+                 dimensions=DEFAULT_DIMENSIONS,
+                 length=DEFAULT_LENGTH,
                  full_board_ends_game=FULL_BOARD_ENDS_GAME,
                  invalid_move_ends_game=INVALID_MOVE_ENDS_GAME):
         if dimensions <= 0 or length <= 0:
@@ -27,8 +31,9 @@ class NBoard(object):
         self._init_tiles()
 
     def _init_tiles(self):
-        dims = [self.length for _ in range(0, self.dims)]
-        self._tiles = numpy.zeros(dims, dtype=int)
+        dims = [self.length for _ in xrange(0, self.dims)]
+        self._tiles = numpy.zeros(dims, dtype=self.BOARD_TILE_TYPE)
+        self._tile_proto = numpy.copy(self._tiles)
         self._last_tiles = None
         self._indices = list(numpy.ndindex(self._tiles.shape))
 
@@ -39,8 +44,7 @@ class NBoard(object):
         print(self._tiles)
 
     def empty_tiles(self):
-        return [idx for idx, val in enumerate(self._tiles.flat)
-                if val == 0]
+        return numpy.where(self._tiles.flat == 0)[0]
 
     def game_over(self, **kwargs):
         raise GameOver(self.score())
@@ -64,6 +68,12 @@ class NBoard(object):
 
     def move(self):
         raise NotImplementedError()
+
+    def reset(self):
+        self._tiles = numpy.copy(self._tile_proto)
+        self._last_tiles = None
+        self.invalid_moves = 0
+        self.valid_moves = 0
 
     def undo(self):
         if self._last_tiles is not None:

@@ -83,6 +83,8 @@ class Net(object):
 
     def _softmax(self, vals):
         e_vals = numpy.exp(vals - numpy.max(vals))
+        # For other than 1D arrays, should be sum(axis=0, keepdims=True)
+        # Possibly axis=1
         return e_vals / e_vals.sum()
 
     def run(self, in_arr):

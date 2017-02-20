@@ -51,6 +51,7 @@ class GeneticNetTrainer(object):
     DEFAULT_GENERATION_SIZE = 1000
     DEFAULT_MUTATION_CHANCE = 0.1
     DEFAULT_MUTATION_DIFFERENCE = 0.05
+    DEFAULT_POLYGAMY = False
 
     DEFAULT_MODEL_ITERATIONS = 1000
 
@@ -67,6 +68,7 @@ class GeneticNetTrainer(object):
                  generation_size=DEFAULT_GENERATION_SIZE,
                  mutation_chance=DEFAULT_MUTATION_CHANCE,
                  mutation_difference=DEFAULT_MUTATION_DIFFERENCE,
+                 polygamous=DEFAULT_POLYGAMY,
                  # Model parameters
                  iterations_per_model=DEFAULT_MODEL_ITERATIONS,
                  # Epoch parameters
@@ -95,6 +97,10 @@ class GeneticNetTrainer(object):
             raise ValueError('Mutation chance, and mutation difference must be'
                              ' positive floats between 0.0 and 1.0'
                              ' (inclusive)')
+
+        if not isinstance(polygamous, bool):
+            raise ValueError('Polygamous must be true or false')
+
         if (not isinstance(iterations_per_model, int) or
                 iterations_per_model <= 0):
             raise ValueError('Number of iterations per model must be a positive'
@@ -135,6 +141,7 @@ class GeneticNetTrainer(object):
         self.generation_cutoff = generation_cutoff
         self.mutation_chance = mutation_chance
         self.mutation_difference = mutation_difference
+        self.polygamous = polygamous
         # Model variables
         self.iterations_per_model = iterations_per_model
         # Net variables
@@ -153,10 +160,14 @@ class GeneticNetTrainer(object):
         # Weights is a list of lists of numpy.ndarrays
         # Breed generation in a 'seed' competition format
         seeds = len(weights)
+        partner_offset = -1 if self.polygamous else 0
+        polygamy_offset = 0 if not self.polygamous else 1
         next_gen = [None for _ in xrange(self.generation_size)]
         for offspring_num in xrange(self.generation_size):
-            pair_idx = (seeds - offspring_num) % seeds
             idx = offspring_num % seeds
+            if idx == 0:
+                partner_offset += polygamy_offset
+            pair_idx = (seeds - offspring_num - partner_offset) % seeds
             if pair_idx == idx:
                 # Don't breed with self - use highest seed instead
                 pair_idx = 0 if idx != 0 else 1
@@ -575,6 +586,7 @@ class BoardTrainer(ScoringTrainer):
             if normalize_board is not None
             else self.NORMALIZE_BOARD
             )
+        self._board = None
 
         # Test to ensure nothing breaks
         self.BOARD_OBJ(
@@ -583,15 +595,22 @@ class BoardTrainer(ScoringTrainer):
             full_board_ends_game=self.full_board_ends_game,
             invalid_move_ends_game=self.invalid_move_ends_game)
 
+    def get_board(self):
+        if self._board:
+            self._board.reset()
+        else:
+            self._board = self.BOARD_OBJ(
+                dimensions=self.board_dimensions,
+                length=self.board_dim_length,
+                full_board_ends_game=self.full_board_ends_game,
+                invalid_move_ends_game=self.invalid_move_ends_game)
+        return self._board
+
     def test_net_once(self, net, num_iterations):
         """
         @return: Score namedtuple
         """
-        board = self.BOARD_OBJ(
-            dimensions=self.board_dimensions,
-            length=self.board_dim_length,
-            full_board_ends_game=self.full_board_ends_game,
-            invalid_move_ends_game=self.invalid_move_ends_game)
+        board = self.get_board()
         return self.do_game(board, net, num_iterations)
 
     def do_game(self, board, net, num_iterations):
@@ -756,11 +775,7 @@ class CompetitiveTrainer(BoardTrainer):
         """
         @return: (net_test Score namedtuple, net_adversary Score namedtuple)
         """
-        board = self.BOARD_OBJ(
-            dimensions=self.board_dimensions,
-            length=self.board_dim_length,
-            full_board_ends_game=self.full_board_ends_game,
-            invalid_move_ends_game=self.invalid_move_ends_game)
+        board = self.get_board()
         return self.do_game(board, net_test, net_adversary, num_iterations)
 
 
@@ -768,14 +783,14 @@ class TicTacToeTrainer(CompetitiveTrainer):
 
     BOARD_OBJ = BoardTTT
     BASE_PLAYER = NaiveTTTPlayer
+    PLACE_TO_SCORE_MULTIPLIER = {
+        'win': 1,
+        'loss': 0,
+        'draw': 0.5,
+        }
 
     def do_game(self, board, net_test, net_adversary, num_iterations):
         player_to_move = 1
-        place_to_score_multiplier = {
-            'win': 1,
-            'loss': 0,
-            'draw': 0.5,
-            }
         player_one_place = 'draw'
         player_two_place = 'draw'
         reason = 'No Game'
@@ -816,8 +831,8 @@ class TicTacToeTrainer(CompetitiveTrainer):
             else:
                 # Draw assumed by default
                 pass
-        score1 = place_to_score_multiplier.get(player_one_place)
-        score2 = place_to_score_multiplier.get(player_two_place)
+        score1 = self.PLACE_TO_SCORE_MULTIPLIER.get(player_one_place)
+        score2 = self.PLACE_TO_SCORE_MULTIPLIER.get(player_two_place)
         return (
             self.SCORE_OBJ(
                 game_over=reason,

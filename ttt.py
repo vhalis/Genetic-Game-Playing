@@ -1,7 +1,13 @@
 from argparse import ArgumentParser
+from functools import partial
 from random import choice as rand_choice
 
-from numpy import array as np_array
+from numpy import (
+    array as np_array,
+    equal as np_equal,
+    int8,
+    vectorize,
+    )
 
 from nboard import (
     GameOver,
@@ -14,6 +20,20 @@ class GameOverInvalid(GameOver):
 
 
 class BoardTTT(NBoard):
+
+    BOARD_NORMAL_BY_PLAYER = {
+        1: {
+            0: 0,
+            1: 1,
+            2: -1,
+            },
+        2: {
+            0: 0,
+            1: -1,
+            2: 1,
+            }
+        }
+    BOARD_TILE_TYPE = int8
 
     DEFAULT_DIMENSIONS = 2
     DEFAULT_LENGTH = 3
@@ -43,9 +63,10 @@ class BoardTTT(NBoard):
         # Check verticals and horizontals
         # This only works for two dimensions right now
         def check_winner(row):
-            winner = reduce(lambda x, y: y if x == y else 0, row)
-            if winner:
-                self.winning_player = winner
+            # winner = reduce(lambda x, y: y if x == y else 0, row)
+            if row[0] != 0:
+                if np_equal.reduce(row):
+                    self.winning_player = row[0]
         for row in self._tiles:
             check_winner(row)
         for col in self._tiles.T:
@@ -69,6 +90,16 @@ class BoardTTT(NBoard):
             if tile_idx % self.length == 0:
                 print ""
 
+    def game_over(self, invalid_move=False, **kwargs):
+        if invalid_move:
+            raise GameOverInvalid(self.score())
+        else:
+            super(BoardTTT, self).game_over(**kwargs)
+
+    def is_board_full(self):
+        """Special case for TTT boards - 9 valid moves"""
+        return self.valid_moves >= 9
+
     def move(self, position, player, suppress_invalid=False):
         if position not in self.empty_tiles():
             if not suppress_invalid:
@@ -87,34 +118,41 @@ class BoardTTT(NBoard):
         self.valid_moves += 1
         return True
 
-    def post_valid_move(self):
-        if self.is_board_full():
-            self.game_over(full_board=True)
-        else:
-            self.check_for_win()
-
-    def score(self):
-        return self.winning_player
-
-    def game_over(self, invalid_move=False, **kwargs):
-        if invalid_move:
-            raise GameOverInvalid(self.score())
-        else:
-            super(BoardTTT, self).game_over(**kwargs)
-
     def normalize_board(self, player_to_move, reshape=False):
+        # tile_copy = BoardTTT._remap(self._tiles.flatten(),
+                                    # player_to_move)
         tile_copy = self._tiles.flatten()
-        tile_map = {
-            0: 0,
-            1: 1 if player_to_move == 1 else -1,
-            2: 1 if player_to_move == 2 else -1,
-            }
+        tile_map = self.BOARD_NORMAL_BY_PLAYER[player_to_move]
         for idx, tile in enumerate(tile_copy):
             tile_copy.put(idx, tile_map[tile])
         if reshape:
             return tile_copy.reshape(self._tiles.shape)
         else:
             return tile_copy
+
+    def post_valid_move(self):
+        if self.is_board_full():
+            self.game_over(full_board=True)
+        else:
+            self.check_for_win()
+
+    # For some reason this is terribly slow
+    # It's slow even with the dictionary in the function
+    @classmethod
+    @partial(vectorize, excluded=['player_to_move'])
+    def _remap(cls, board_num, player_to_move):
+        return cls.BOARD_NORMAL_BY_PLAYER[player_to_move][board_num]
+
+    def reset(self):
+        super(BoardTTT, self).reset()
+        self.winning_player = 0
+        self.p1_invalid_moves = 0
+        self.p1_valid_moves = 0
+        self.p2_invalid_moves = 0
+        self.p2_valid_moves = 0
+
+    def score(self):
+        return self.winning_player
 
 
 class NaiveTTTPlayer(object):
